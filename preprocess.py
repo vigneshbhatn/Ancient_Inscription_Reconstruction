@@ -5,15 +5,92 @@ Based on the v8 preprocessing pipeline with real-time parameter adjustment.
 
 import cv2
 import numpy as np
-import streamlit as st
 
 
-@st.cache_data(show_spinner=False)
+def remove_dots(image, min_size=20, max_aspect_ratio=2.5, circularity_area_threshold=50):
+    """
+    Remove dots from the inscription image (works on binary images).
+    
+    Args:
+        image: Input binary image as numpy array
+        min_size: Minimum area to keep (dots are typically smaller)
+        max_aspect_ratio: Max width/height ratio for dots
+        circularity_area_threshold: Max area for highly circular components
+    
+    Returns:
+        Image with dots removed
+    """
+    # Work directly on binary image
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image.copy()
+    
+    # Ensure binary image (white text on black background)
+    # Check if image is already binary
+    unique_vals = np.unique(gray)
+    if len(unique_vals) > 2:
+        # Not binary, apply threshold
+        _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+    else:
+        binary = gray.copy()
+    
+    # Find connected components
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    
+    # Create output image
+    output = np.zeros_like(binary)
+    
+    for i in range(1, num_labels):  # Skip background (label 0)
+        area = stats[i, cv2.CC_STAT_AREA]
+        width = stats[i, cv2.CC_STAT_WIDTH]
+        height = stats[i, cv2.CC_STAT_HEIGHT]
+        
+        # Calculate aspect ratio
+        if height > 0:
+            aspect_ratio = width / height
+        else:
+            aspect_ratio = 0
+        
+        # Calculate circularity (how close to a circle)
+        perimeter = cv2.arcLength(np.argwhere(labels == i), True)
+        if perimeter > 0:
+            circularity = 4 * np.pi * area / (perimeter * perimeter)
+        else:
+            circularity = 0
+        
+        # Keep component if:
+        # 1. Area is larger than min_size
+        # 2. OR it's not too circular and not too small
+        # 3. OR it's elongated (not a dot-like shape)
+        
+        keep = False
+        
+        # Large enough components are always kept
+        if area >= circularity_area_threshold:
+            keep = True
+        # Medium sized components - check shape
+        elif area >= min_size:
+            # Keep if it's elongated (not circular/square-like)
+            if aspect_ratio > max_aspect_ratio or aspect_ratio < 1/max_aspect_ratio:
+                keep = True
+            # Keep if it's not very circular
+            elif circularity < 0.7:
+                keep = True
+        
+        if keep:
+            output[labels == i] = 255
+    
+    return output
+
+
 def preprocess_image_v8(image_cv, apply_clahe, clahe_clip, clahe_grid,
                         invert_grayscale, denoise_method, blur_ksize,
                         nl_h, nl_template, nl_search,
                         adaptive_method_option, adaptive_block, adaptive_c,
-                        opening_iter, erosion_iter, dilation_iter):
+                        opening_iter, erosion_iter, dilation_iter,
+                        apply_dot_removal, dot_min_size, dot_max_aspect_ratio, 
+                        dot_circularity_threshold):
     """
     Complete preprocessing pipeline for inscription images.
     
@@ -34,9 +111,13 @@ def preprocess_image_v8(image_cv, apply_clahe, clahe_clip, clahe_grid,
         opening_iter: Number of morphological opening iterations
         erosion_iter: Number of erosion iterations
         dilation_iter: Number of dilation iterations
+        apply_dot_removal: Whether to apply dot removal (LAST step)
+        dot_min_size: Minimum dot size for removal
+        dot_max_aspect_ratio: Max aspect ratio for dots
+        dot_circularity_threshold: Circularity threshold for dots
     
     Returns:
-        Tuple of (display_gray, display_clahe, denoised, binarized, final_output)
+        Tuple of (display_gray, display_clahe, denoised, binarized, post_morph, final_output)
     """
     # 1. Convert to Grayscale
     gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
@@ -79,20 +160,22 @@ def preprocess_image_v8(image_cv, apply_clahe, clahe_clip, clahe_grid,
     )
     
     # 4. Post-Processing (Morphological Operations)
-    final_output = binarized
+    post_morph = binarized
     kernel = np.ones((3, 3), np.uint8)
     
     if opening_iter > 0:
-        final_output = cv2.morphologyEx(binarized, cv2.MORPH_OPEN, kernel, iterations=opening_iter)
-        binarized_copy = final_output
-    else:
-        binarized_copy = binarized
+        post_morph = cv2.morphologyEx(binarized, cv2.MORPH_OPEN, kernel, iterations=opening_iter)
     
     if erosion_iter > 0:
-        final_output = cv2.erode(binarized_copy, kernel, iterations=erosion_iter)
+        post_morph = cv2.erode(post_morph, kernel, iterations=erosion_iter)
     
     if dilation_iter > 0:
-        final_output = cv2.dilate(final_output, kernel, iterations=dilation_iter)
+        post_morph = cv2.dilate(post_morph, kernel, iterations=dilation_iter)
+    
+    # 5. Dot Removal (LAST STEP - after all other processing)
+    final_output = post_morph
+    if apply_dot_removal:
+        final_output = remove_dots(post_morph, dot_min_size, dot_max_aspect_ratio, dot_circularity_threshold)
     
     # Prepare display images
     display_gray = gray if not invert_grayscale else cv2.bitwise_not(gray)
@@ -101,7 +184,7 @@ def preprocess_image_v8(image_cv, apply_clahe, clahe_clip, clahe_grid,
         clahe_obj = cv2.createCLAHE(clipLimit=clahe_clip, tileGridSize=(clahe_grid, clahe_grid))
         display_clahe = clahe_obj.apply(display_gray)
     
-    return display_gray, display_clahe, denoised, binarized, final_output
+    return display_gray, display_clahe, denoised, binarized, post_morph, final_output
 
 
 def preprocess_simple(image, method="adaptive"):

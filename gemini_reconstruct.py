@@ -69,7 +69,7 @@ def build_reconstruction_prompt(ocr_text: str, context: Optional[str] = None) ->
     Returns:
         Formatted prompt string
     """
-    base_prompt = f"""You are an expert paleographer and historian specializing in ancient Kannada inscriptions.You are helping in reconstructing ancient inscriptions belonging to the the region of Karnataka. These inscriptions are of the time period between 9th to 15th century AD and in the Halegannada language.
+    base_prompt = f"""You are an expert paleographer and historian specializing in ancient Kannada inscriptions.You are helping in reconstructing ancient inscriptions belonging to the the region of Karnataka. These inscriptions are of the time period between 9th to 15th century AD and in the Halegannada language.Do not include any information which of after 15th century, also do not display any current affairs and modern kannada history. Also do not include any information related to inscriptions after 15th century. 
 
 Your task is to reconstruct and correct the following text that was extracted from an ancient Kannada inscription using OCR. The OCR may contain errors due to:
 - Weathering and damage to the stone

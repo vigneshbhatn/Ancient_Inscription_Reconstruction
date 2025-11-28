@@ -17,6 +17,7 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 # Page config
 st.set_page_config(
     page_title="Kannada Inscription Reconstruction",
+    page_icon="📜",
     layout="wide"
 )
 
@@ -107,8 +108,48 @@ with st.sidebar:
     
     st.divider()
     
+    # Dot Removal (LAST STEP)
+    st.subheader("5. Dot Removal (Final Step)")
+    apply_dot_removal = st.checkbox("Apply Dot Removal", value=True, 
+                                   help="Remove dots and small artifacts (applied LAST)")
+    
+    if apply_dot_removal:
+        dot_min_size = st.slider(
+            "Minimum Component Size",
+            min_value=10,
+            max_value=200,
+            value=50,
+            help="Components smaller than this may be removed if circular",
+            key="dot_min_size"
+        )
+        
+        dot_max_aspect_ratio = st.slider(
+            "Max Aspect Ratio (Square-ness)",
+            min_value=1.0,
+            max_value=5.0,
+            value=1.5,
+            step=0.1,
+            help="Remove square-like shapes (dots). Higher = keep more elongated shapes",
+            key="dot_max_aspect_ratio"
+        )
+        
+        dot_circularity_threshold = st.slider(
+            "Large Component Threshold",
+            min_value=50,
+            max_value=300,
+            value=100,
+            help="Components larger than this are always kept",
+            key="dot_circularity_threshold"
+        )
+    else:
+        dot_min_size = 50
+        dot_max_aspect_ratio = 1.5
+        dot_circularity_threshold = 100
+    
+    st.divider()
+    
     # Segmentation Parameters
-    st.subheader("5. Segmentation Parameters")
+    st.subheader("6. Segmentation Parameters")
     min_area = st.slider(
         "Minimum Character Area",
         min_value=50,
@@ -140,7 +181,7 @@ with st.sidebar:
     st.divider()
     
     # API Configuration
-    st.subheader("6. API Configuration")
+    st.subheader("7. API Configuration")
     
     # Check if API key is in environment
     if GEMINI_API_KEY:
@@ -155,8 +196,8 @@ with st.sidebar:
         )
 
 # Main content area
-st.title("Reconstruction of ancient kannada inscriptions")
-st.write("Ancient Kannada inscription analysis using computer vision and AI")
+st.title("Kannada Inscription Reconstruction System")
+
 
 col1, col2 = st.columns([1, 1])
 
@@ -184,26 +225,59 @@ with col1:
         # Show spinner for NLM method
         if denoise_method == "Non-Local Means":
             with st.spinner('Applying Non-Local Means Denoising... This may take a moment...'):
-                disp_gray, disp_clahe, denoised, binarized, final_output = preprocess_image_v8(
+                disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = preprocess_image_v8(
                     original_image_cv, apply_clahe, clahe_clip, clahe_grid,
                     invert_grayscale, denoise_method, blur_ksize,
                     nl_h, nl_template, nl_search,
                     adaptive_method_option, adaptive_block, adaptive_c,
-                    opening_iter, erosion_iter, dilation_iter
+                    opening_iter, erosion_iter, dilation_iter,
+                    apply_dot_removal, dot_min_size, dot_max_aspect_ratio,
+                    dot_circularity_threshold
                 )
         else:
-            disp_gray, disp_clahe, denoised, binarized, final_output = preprocess_image_v8(
-                original_image_cv, apply_clahe, clahe_clip, clahe_grid,
-                invert_grayscale, denoise_method, blur_ksize,
-                nl_h, nl_template, nl_search,
-                adaptive_method_option, adaptive_block, adaptive_c,
-                opening_iter, erosion_iter, dilation_iter
-            )
+            # Cache the preprocessing result to avoid recomputation
+            cache_key = f"{hash(original_image_cv.tobytes())}_{apply_clahe}_{clahe_clip}_{clahe_grid}_{invert_grayscale}_{denoise_method}_{blur_ksize}_{nl_h}_{nl_template}_{nl_search}_{adaptive_method_option}_{adaptive_block}_{adaptive_c}_{opening_iter}_{erosion_iter}_{dilation_iter}_{apply_dot_removal}_{dot_min_size}_{dot_max_aspect_ratio}_{dot_circularity_threshold}"
+            
+            if 'preprocess_cache' not in st.session_state:
+                st.session_state.preprocess_cache = {}
+            
+            if cache_key in st.session_state.preprocess_cache:
+                disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = st.session_state.preprocess_cache[cache_key]
+            else:
+                disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = preprocess_image_v8(
+                    original_image_cv, apply_clahe, clahe_clip, clahe_grid,
+                    invert_grayscale, denoise_method, blur_ksize,
+                    nl_h, nl_template, nl_search,
+                    adaptive_method_option, adaptive_block, adaptive_c,
+                    opening_iter, erosion_iter, dilation_iter,
+                    apply_dot_removal, dot_min_size, dot_max_aspect_ratio,
+                    dot_circularity_threshold
+                )
+                st.session_state.preprocess_cache[cache_key] = (disp_gray, disp_clahe, denoised, binarized, post_morph, final_output)
         
         st.session_state.processed_image = final_output
         
-        # Display final processed image
-        st.image(final_output, caption="Processed Image", width=200)
+        # Display preprocessing stages
+        num_cols = 7 if apply_clahe else 6
+        cols = st.columns(num_cols)
+        
+        col_idx = 0
+        cols[col_idx].image(original_image_cv, caption="1. Original", )
+        col_idx += 1
+        cols[col_idx].image(disp_gray, caption="2. Grayscale", width='stretch')
+        col_idx += 1
+        
+        if apply_clahe and disp_clahe is not None:
+            cols[col_idx].image(disp_clahe, caption="3. CLAHE", width='stretch')
+            col_idx += 1
+        
+        cols[col_idx].image(denoised, caption=f"{col_idx+1}. Denoised", width='stretch')
+        col_idx += 1
+        cols[col_idx].image(binarized, caption=f"{col_idx+1}. Binarized", width='stretch')
+        col_idx += 1
+        cols[col_idx].image(post_morph, caption=f"{col_idx+1}. Morphology", width='stretch')
+        col_idx += 1
+        cols[col_idx].image(final_output, caption=f"{col_idx+1}. Final (Dots Removed)", width='content')
         
         # Step 2: Real-time Segmentation
         st.subheader("Step 2: Character Segmentation (Real-time)")
@@ -281,8 +355,8 @@ with col2:
             if not gemini_api_key:
                 st.warning("Please add GEMINI_API_KEY to your .env file or enter it in the sidebar")
             else:
-                if st.button("Reconstruct with Gemini", width='stretch'):
-                    with st.spinner("Reconstructing text with Gemini AI..."):
+                if st.button("Reconstruct Sentence", width='stretch'):
+                    with st.spinner("Reconstructing text with LLM..."):
                         reconstructed = reconstruct_with_gemini(
                             extracted_text,
                             gemini_api_key
@@ -296,9 +370,44 @@ with col2:
                 st.write("**Reconstructed Text:**")
                 st.markdown(st.session_state.reconstructed_text)
                 
-        
-        
+                # Download options
+                st.divider()
+                st.subheader("Download Results")
+                
+                col2a, col2b = st.columns(2)
+                
+                with col2a:
+                    # Download OCR results
+                    ocr_text = "\n".join([
+                        f"{r['text']} (conf: {r['confidence']:.2%})"
+                        for r in st.session_state.ocr_results
+                    ])
+                    st.download_button(
+                        "Download OCR Results",
+                        ocr_text,
+                        file_name="ocr_results.txt",
+                        width='stretch'
+                    )
+                
+                with col2b:
+                    # Download reconstructed text
+                    st.download_button(
+                        "Download Reconstruction",
+                        st.session_state.reconstructed_text,
+                        file_name="reconstructed_text.txt",
+                        width='stretch'
+                    )
     else:
         st.info("Please complete the preprocessing and segmentation steps first")
 
-
+# Footer
+st.divider()
+st.markdown("""
+### Instructions:
+1. **Upload** an image of the ancient Kannada inscription
+2. **Adjust preprocessing parameters** in the sidebar (updates in real-time)
+3. **Segment** characters to identify individual regions
+4. **Run OCR** to extract text (placeholder for your fine-tuned model)
+5. **Reconstruct** the text using Gemini API for better accuracy
+6. **Download** results for further analysis
+""")
