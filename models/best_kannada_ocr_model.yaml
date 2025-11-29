@@ -1,0 +1,9 @@
+network_params:
+  input_channel: 1          # Usually 1 (Grayscale) for standard EasyOCR training
+  output_channel: 512
+  hidden_size: 256
+imgH: 64                    # Standard training height
+imgW: 600
+lang_list:         # <--- ADD THIS SECTION
+  - 'kn'                   # Standard training width
+character_list: "ಅಆಇಈಉಊಋಎಏಐಒಓಔಅಂಅಃಕಖಗಘಙಚಛಜಝಞಟಠಡಢಣತಥದಧನಪಫಬಭಮಯರಲವಶಷಸಹಳ"

@@ -1,247 +1,197 @@
-"""
-OCR module for Kannada inscription recognition.
-Uses EasyOCR with placeholder for fine-tuned model.
-"""
-
-import easyocr
-import numpy as np
+import torch
+import torch.nn as nn
+from torchvision import transforms
+from PIL import Image
 import cv2
+import numpy as np
+import json
+import os
 
+# ---------------------------------------------------------
+# 1. MODEL ARCHITECTURE
+# Must match the class used in your training notebook exactly
+# ---------------------------------------------------------
+class KannadaOCRModel(nn.Module):
+    def __init__(self, num_classes):
+        super(KannadaOCRModel, self).__init__()
+        
+        self.features = nn.Sequential(
+            # Block 1
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(32),
+            nn.MaxPool2d(2, 2),
+            
+            # Block 2
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            nn.MaxPool2d(2, 2),
+            
+            # Block 3
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            nn.MaxPool2d(2, 2),
+            
+            # Block 4
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(256),
+            nn.MaxPool2d(2, 2),
+        )
+        
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(256 * 4 * 4, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, num_classes)
+        )
+    
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
 
-# Global reader instance (initialized once for efficiency)
-_reader = None
+# ---------------------------------------------------------
+# 2. SETUP & HELPERS
+# ---------------------------------------------------------
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# Caching variables so we don't reload model on every call
+_CACHED_MODEL = None
+_IDX_TO_CHAR = None
 
-def get_reader(languages=['kn'], gpu=True):
+def load_resources(model_dir="models"):
     """
-    Get or create EasyOCR reader instance.
-    
-    Args:
-        languages: List of language codes ('kn' for Kannada)
-        gpu: Whether to use GPU acceleration
-    
-    Returns:
-        EasyOCR Reader instance
+    Loads the trained model weights and character mapping.
     """
-    global _reader
+    global _CACHED_MODEL, _IDX_TO_CHAR
     
-    if _reader is None:
-        _reader = easyocr.Reader(languages, gpu=gpu)
-    
-    return _reader
+    if _CACHED_MODEL is not None and _IDX_TO_CHAR is not None:
+        return _CACHED_MODEL, _IDX_TO_CHAR
 
+    # Paths
+    model_path = os.path.join(model_dir, "best_kannada_ocr_model.pth")
+    mapping_path = os.path.join(model_dir, "char_mappings.json")
 
-def run_easyocr(image, bounding_boxes=None, detail=1):
-    """
-    Run EasyOCR on the image or specific regions.
+    # 1. Load Mappings
+    if not os.path.exists(mapping_path):
+        raise FileNotFoundError(f"Mapping file not found at {mapping_path}. Export it from your notebook!")
     
-    Args:
-        image: Input image (grayscale or BGR)
-        bounding_boxes: Optional list of bounding boxes [(x, y, w, h), ...]
-                       If provided, OCR will run on each region separately
-        detail: Level of detail in results (0, 1, or 2)
-                0: Only text
-                1: Text with confidence
-                2: Text, confidence, and coordinates
+    with open(mapping_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        # JSON converts integer keys to strings, so we convert them back
+        _IDX_TO_CHAR = {int(k): v for k, v in data['idx_to_char'].items()}
+        
+    num_classes = len(_IDX_TO_CHAR)
     
-    Returns:
-        List of dictionaries with OCR results
-        [{'text': str, 'confidence': float, 'bbox': tuple}, ...]
-    """
-    reader = get_reader()
+    # 2. Load Model
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model weights not found at {model_path}")
+        
+    model = KannadaOCRModel(num_classes=num_classes)
+    checkpoint = torch.load(model_path, map_location=DEVICE)
     
-    # Convert to RGB if needed (EasyOCR expects RGB)
-    if len(image.shape) == 2:
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-    elif len(image.shape) == 3 and image.shape[2] == 3:
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # Handle checkpoint dictionary vs direct model save
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
     else:
-        image_rgb = image
+        model.load_state_dict(checkpoint)
+        
+    model.to(DEVICE)
+    model.eval()
+    
+    _CACHED_MODEL = model
+    print(f"Loaded model with {num_classes} classes on {DEVICE}")
+    
+    return _CACHED_MODEL, _IDX_TO_CHAR
+
+def preprocess_crop(img_crop):
+    """
+    Transforms a cv2 image crop to the format expected by the model.
+    Matches the validation transforms from your notebook.
+    """
+    # Convert BGR (OpenCV) to RGB
+    img_rgb = cv2.cvtColor(img_crop, cv2.COLOR_BGR2RGB)
+    
+    # Convert to PIL Image
+    pil_img = Image.fromarray(img_rgb)
+    
+    # Define Transforms (Must match your training 'val_transform')
+    transform = transforms.Compose([
+        transforms.Resize((64, 64)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    # Add batch dimension (1, C, H, W) and move to device
+    return transform(pil_img).unsqueeze(0).to(DEVICE)
+
+# ---------------------------------------------------------
+# 3. MAIN INFERENCE FUNCTION
+# ---------------------------------------------------------
+def run_custom_model(image, bounding_boxes=None, model_path=None):
+    """
+    Main entry point called by app.py.
+    
+    Args:
+        image: Full input image (OpenCV/numpy array)
+        bounding_boxes: List of (x, y, w, h) tuples
+        model_path: Ignored (uses load_resources defaults), kept for compatibility
+    
+    Returns:
+        List of dicts: [{'text': char, 'confidence': float, 'bbox': tuple}, ...]
+    """
+    # Load model and mappings
+    model, idx_to_char = load_resources()
     
     results = []
     
-    if bounding_boxes is None:
-        # Run OCR on entire image
-        ocr_results = reader.readtext(image_rgb, detail=1)
+    if not bounding_boxes:
+        return results
+
+    # Loop through each bounding box
+    for i, (x, y, w, h) in enumerate(bounding_boxes):
+        # Skip tiny boxes (noise)
+        if w < 5 or h < 5:
+            continue
+            
+        # 1. Crop the character region
+        # Handle edge cases to ensure we don't crop outside image
+        y1, y2 = max(0, y), min(image.shape[0], y+h)
+        x1, x2 = max(0, x), min(image.shape[1], x+w)
         
-        for detection in ocr_results:
-            bbox, text, confidence = detection
-            results.append({
-                'text': text,
-                'confidence': confidence,
-                'bbox': bbox
-            })
-    else:
-        # Run OCR on each region
-        for i, (x, y, w, h) in enumerate(bounding_boxes):
-            # Extract region
-            region = image_rgb[y:y+h, x:x+w]
+        roi = image[y1:y2, x1:x2]
+        
+        if roi.size == 0:
+            continue
+
+        # 2. Preprocess
+        input_tensor = preprocess_crop(roi)
+
+        # 3. Prediction
+        with torch.no_grad():
+            outputs = model(input_tensor)
             
-            # Skip very small regions
-            if region.size == 0 or w < 10 or h < 10:
-                continue
+            # Apply Softmax to get confidence percentages
+            probs = torch.nn.functional.softmax(outputs, dim=1)
+            conf, predicted_idx = torch.max(probs, 1)
             
-            # Run OCR on region
-            ocr_results = reader.readtext(region, detail=1)
+            class_id = predicted_idx.item()
+            confidence = conf.item()
             
-            if ocr_results:
-                # Take the best result
-                best_result = max(ocr_results, key=lambda x: x[2])  # Max confidence
-                bbox, text, confidence = best_result
-                
-                results.append({
-                    'text': text,
-                    'confidence': confidence,
-                    'bbox': (x, y, w, h),
-                    'region_id': i
-                })
-            else:
-                # No text detected in region
-                results.append({
-                    'text': '',
-                    'confidence': 0.0,
-                    'bbox': (x, y, w, h),
-                    'region_id': i
-                })
-    
+            # Map ID to Character
+            predicted_char = idx_to_char.get(class_id, "?")
+
+        # 4. Format Result
+        results.append({
+            'text': predicted_char,
+            'confidence': confidence,
+            'bbox': (x, y, w, h),
+            'region_id': i
+        })
+
     return results
-
-
-def run_custom_model(image, bounding_boxes=None, model_path=None):
-    """
-    Placeholder for your fine-tuned model.
-    Replace this function with your actual model implementation.
-    
-    Args:
-        image: Input image
-        bounding_boxes: Optional list of bounding boxes
-        model_path: Path to your fine-tuned model weights
-    
-    Returns:
-        List of dictionaries with OCR results
-    """
-    # TODO: Implement your fine-tuned model here
-    # Example structure:
-    # 1. Load your model
-    # 2. Preprocess image/regions
-    # 3. Run inference
-    # 4. Post-process results
-    # 5. Return in same format as run_easyocr
-    
-    print("Custom model not implemented yet. Using EasyOCR as fallback.")
-    return run_easyocr(image, bounding_boxes)
-
-
-def post_process_text(text):
-    """
-    Post-process OCR text to fix common errors.
-    
-    Args:
-        text: Raw OCR text
-    
-    Returns:
-        Cleaned text
-    """
-    # Remove extra whitespace
-    cleaned = ' '.join(text.split())
-    
-    # Add custom corrections for common OCR errors in Kannada
-    # Example replacements (customize based on your data)
-    replacements = {
-        # Add common OCR mistakes here
-        # 'wrong': 'correct',
-    }
-    
-    for wrong, correct in replacements.items():
-        cleaned = cleaned.replace(wrong, correct)
-    
-    return cleaned
-
-
-def batch_ocr(images, bounding_boxes_list=None):
-    """
-    Run OCR on multiple images in batch.
-    
-    Args:
-        images: List of images
-        bounding_boxes_list: Optional list of bounding box lists
-    
-    Returns:
-        List of OCR results for each image
-    """
-    all_results = []
-    
-    for i, image in enumerate(images):
-        if bounding_boxes_list is not None:
-            boxes = bounding_boxes_list[i]
-        else:
-            boxes = None
-        
-        results = run_easyocr(image, boxes)
-        all_results.append(results)
-    
-    return all_results
-
-
-def visualize_ocr_results(image, results):
-    """
-    Visualize OCR results on the image.
-    
-    Args:
-        image: Input image
-        results: OCR results from run_easyocr
-    
-    Returns:
-        Image with OCR results visualized
-    """
-    # Convert to BGR if grayscale
-    if len(image.shape) == 2:
-        output = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    else:
-        output = image.copy()
-    
-    for result in results:
-        text = result['text']
-        confidence = result['confidence']
-        bbox = result['bbox']
-        
-        if isinstance(bbox, tuple) and len(bbox) == 4:
-            # Simple bbox format (x, y, w, h)
-            x, y, w, h = bbox
-            points = [(x, y), (x+w, y), (x+w, y+h), (x, y+h)]
-        else:
-            # EasyOCR format (list of points)
-            points = [(int(p[0]), int(p[1])) for p in bbox]
-        
-        # Draw polygon
-        pts = np.array(points, dtype=np.int32)
-        cv2.polylines(output, [pts], True, (0, 255, 0), 2)
-        
-        # Draw text and confidence
-        label = f"{text} ({confidence:.2f})"
-        cv2.putText(
-            output,
-            label,
-            (points[0][0], points[0][1] - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 255, 0),
-            1,
-            cv2.LINE_AA
-        )
-    
-    return output
-
-
-def filter_low_confidence(results, threshold=0.5):
-    """
-    Filter OCR results by confidence threshold.
-    
-    Args:
-        results: OCR results
-        threshold: Minimum confidence score
-    
-    Returns:
-        Filtered results
-    """
-    return [r for r in results if r['confidence'] >= threshold]

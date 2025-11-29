@@ -7,7 +7,7 @@ import os
 from dotenv import load_dotenv
 from preprocess import preprocess_image_v8
 from segment import segment_characters, draw_bounding_boxes
-from ocr_model import run_easyocr
+from ocr_model import run_custom_model
 from gemini_reconstruct import reconstruct_with_gemini
 
 # Load environment variables
@@ -264,18 +264,18 @@ with col1:
         col_idx = 0
         cols[col_idx].image(original_image_cv, caption="1. Original", )
         col_idx += 1
-        cols[col_idx].image(disp_gray, caption="2. Grayscale", width='stretch')
+        cols[col_idx].image(disp_gray, caption="2. Grayscale", width='content')
         col_idx += 1
         
         if apply_clahe and disp_clahe is not None:
-            cols[col_idx].image(disp_clahe, caption="3. CLAHE", width='stretch')
+            cols[col_idx].image(disp_clahe, caption="3. CLAHE", width='content')
             col_idx += 1
         
-        cols[col_idx].image(denoised, caption=f"{col_idx+1}. Denoised", width='stretch')
+        cols[col_idx].image(denoised, caption=f"{col_idx+1}. Denoised", width='content')
         col_idx += 1
-        cols[col_idx].image(binarized, caption=f"{col_idx+1}. Binarized", width='stretch')
+        cols[col_idx].image(binarized, caption=f"{col_idx+1}. Binarized", width='content')
         col_idx += 1
-        cols[col_idx].image(post_morph, caption=f"{col_idx+1}. Morphology", width='stretch')
+        cols[col_idx].image(post_morph, caption=f"{col_idx+1}. Morphology", width='content')
         col_idx += 1
         cols[col_idx].image(final_output, caption=f"{col_idx+1}. Final (Dots Removed)", width='content')
         
@@ -321,9 +321,9 @@ with col2:
         # Step 3: OCR
         st.subheader("Step 3: OCR Recognition")
         
-        if st.button("Run EasyOCR", width='stretch'):
+        if st.button("Run EasyOCR", width='content'):
             with st.spinner("Running OCR..."):
-                ocr_results = run_easyocr(
+                ocr_results = run_custom_model(
                     st.session_state.processed_image,
                     st.session_state.bounding_boxes
                 )
@@ -343,7 +343,7 @@ with col2:
                     "Confidence": f"{result['confidence']:.2%}"
                 })
             
-            st.dataframe(ocr_df_data, width='stretch')
+            st.dataframe(ocr_df_data, width='content')
             
             # Extracted text
             extracted_text = " ".join([r['text'] for r in st.session_state.ocr_results])
@@ -355,7 +355,7 @@ with col2:
             if not gemini_api_key:
                 st.warning("Please add GEMINI_API_KEY to your .env file or enter it in the sidebar")
             else:
-                if st.button("Reconstruct Sentence", width='stretch'):
+                if st.button("Reconstruct Sentence", width='content'):
                     with st.spinner("Reconstructing text with LLM..."):
                         reconstructed = reconstruct_with_gemini(
                             extracted_text,
@@ -386,7 +386,7 @@ with col2:
                         "Download OCR Results",
                         ocr_text,
                         file_name="ocr_results.txt",
-                        width='stretch'
+                        width='content'
                     )
                 
                 with col2b:
@@ -395,7 +395,7 @@ with col2:
                         "Download Reconstruction",
                         st.session_state.reconstructed_text,
                         file_name="reconstructed_text.txt",
-                        width='stretch'
+                        width='content'
                     )
     else:
         st.info("Please complete the preprocessing and segmentation steps first")
