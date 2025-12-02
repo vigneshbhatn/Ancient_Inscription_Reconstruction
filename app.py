@@ -198,216 +198,210 @@ with st.sidebar:
 # Main content area
 st.title("Kannada Inscription Reconstruction System")
 
+# ===========================
+# SECTION 1: IMAGE UPLOAD & PREPROCESSING
+# ===========================
+st.header("Image Upload & Processing")
 
-col1, col2 = st.columns([1, 1])
+# Image upload
+uploaded_file = st.file_uploader(
+    "Upload Inscription Image",
+    type=['png', 'jpg', 'jpeg', 'tiff', 'bmp']
+)
 
-with col1:
-    st.header("Image Upload & Processing")
+if uploaded_file is not None:
+    # Load image
+    pil_image = Image.open(uploaded_file).convert('RGB')
+    original_image_np = np.array(pil_image)
+    original_image_cv = cv2.cvtColor(original_image_np, cv2.COLOR_RGB2BGR)
+    st.session_state.original_image = original_image_cv
     
-    # Image upload
-    uploaded_file = st.file_uploader(
-        "Upload Inscription Image",
-        type=['png', 'jpg', 'jpeg', 'tiff', 'bmp']
-    )
+    st.success("Image uploaded successfully")
     
-    if uploaded_file is not None:
-        # Load image
-        pil_image = Image.open(uploaded_file).convert('RGB')
-        original_image_np = np.array(pil_image)
-        original_image_cv = cv2.cvtColor(original_image_np, cv2.COLOR_RGB2BGR)
-        st.session_state.original_image = original_image_cv
-        
-        st.success("Image uploaded successfully")
-        
-        # Real-time preprocessing
-        st.subheader("Step 1: Preprocessing Pipeline (Real-time)")
-        
-        # Show spinner for NLM method
-        if denoise_method == "Non-Local Means":
-            with st.spinner('Applying Non-Local Means Denoising... This may take a moment...'):
-                disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = preprocess_image_v8(
-                    original_image_cv, apply_clahe, clahe_clip, clahe_grid,
-                    invert_grayscale, denoise_method, blur_ksize,
-                    nl_h, nl_template, nl_search,
-                    adaptive_method_option, adaptive_block, adaptive_c,
-                    opening_iter, erosion_iter, dilation_iter,
-                    apply_dot_removal, dot_min_size, dot_max_aspect_ratio,
-                    dot_circularity_threshold
-                )
-        else:
-            # Cache the preprocessing result to avoid recomputation
-            cache_key = f"{hash(original_image_cv.tobytes())}_{apply_clahe}_{clahe_clip}_{clahe_grid}_{invert_grayscale}_{denoise_method}_{blur_ksize}_{nl_h}_{nl_template}_{nl_search}_{adaptive_method_option}_{adaptive_block}_{adaptive_c}_{opening_iter}_{erosion_iter}_{dilation_iter}_{apply_dot_removal}_{dot_min_size}_{dot_max_aspect_ratio}_{dot_circularity_threshold}"
-            
-            if 'preprocess_cache' not in st.session_state:
-                st.session_state.preprocess_cache = {}
-            
-            if cache_key in st.session_state.preprocess_cache:
-                disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = st.session_state.preprocess_cache[cache_key]
-            else:
-                disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = preprocess_image_v8(
-                    original_image_cv, apply_clahe, clahe_clip, clahe_grid,
-                    invert_grayscale, denoise_method, blur_ksize,
-                    nl_h, nl_template, nl_search,
-                    adaptive_method_option, adaptive_block, adaptive_c,
-                    opening_iter, erosion_iter, dilation_iter,
-                    apply_dot_removal, dot_min_size, dot_max_aspect_ratio,
-                    dot_circularity_threshold
-                )
-                st.session_state.preprocess_cache[cache_key] = (disp_gray, disp_clahe, denoised, binarized, post_morph, final_output)
-        
-        st.session_state.processed_image = final_output
-        
-        # Display preprocessing stages
-        num_cols = 7 if apply_clahe else 6
-        cols = st.columns(num_cols)
-        
-        col_idx = 0
-        cols[col_idx].image(original_image_cv, caption="1. Original", )
-        col_idx += 1
-        cols[col_idx].image(disp_gray, caption="2. Grayscale", width='content')
-        col_idx += 1
-        
-        if apply_clahe and disp_clahe is not None:
-            cols[col_idx].image(disp_clahe, caption="3. CLAHE", width='content')
-            col_idx += 1
-        
-        cols[col_idx].image(denoised, caption=f"{col_idx+1}. Denoised", width='content')
-        col_idx += 1
-        cols[col_idx].image(binarized, caption=f"{col_idx+1}. Binarized", width='content')
-        col_idx += 1
-        cols[col_idx].image(post_morph, caption=f"{col_idx+1}. Morphology", width='content')
-        col_idx += 1
-        cols[col_idx].image(final_output, caption=f"{col_idx+1}. Final (Dots Removed)", width='content')
-        
-        # Step 2: Real-time Segmentation
-        st.subheader("Step 2: Character Segmentation (Real-time)")
-        
-        with st.spinner("Segmenting characters..."):
-            bounding_boxes = segment_characters(
-                st.session_state.processed_image,
-                min_area=min_area,
-                padding=seg_padding,
-                max_area_ratio=max_area_ratio
+    # Real-time preprocessing
+    st.subheader("Step 1: Preprocessing Pipeline (Real-time)")
+    
+    # Show spinner for NLM method
+    if denoise_method == "Non-Local Means":
+        with st.spinner('Applying Non-Local Means Denoising... This may take a moment...'):
+            disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = preprocess_image_v8(
+                original_image_cv, apply_clahe, clahe_clip, clahe_grid,
+                invert_grayscale, denoise_method, blur_ksize,
+                nl_h, nl_template, nl_search,
+                adaptive_method_option, adaptive_block, adaptive_c,
+                opening_iter, erosion_iter, dilation_iter,
+                apply_dot_removal, dot_min_size, dot_max_aspect_ratio,
+                dot_circularity_threshold
             )
-            
-            st.session_state.bounding_boxes = bounding_boxes
-            
-            if len(bounding_boxes) == 0:
-                st.warning("No character regions found. Try adjusting: Decrease minimum character area, Increase maximum area ratio, Adjust preprocessing parameters")
-                st.session_state.segmented_image = None
-            else:
-                # Draw bounding boxes with left-to-right numbering
-                st.session_state.segmented_image = draw_bounding_boxes(
-                    st.session_state.processed_image,
-                    bounding_boxes
-                )
-                st.success(f"Found {len(bounding_boxes)} character regions (numbered left to right)")
-        
-        # Display segmented image
-        if st.session_state.segmented_image is not None:
-            st.image(
-                st.session_state.segmented_image,
-                caption=f"Segmented Image ({len(st.session_state.bounding_boxes)} regions, left to right)",
-                width=200
-            )
-
-with col2:
-    st.header("OCR & Reconstruction")
-    
-    if st.session_state.processed_image is not None and len(st.session_state.bounding_boxes) > 0:
-        st.info(f"Image processed | Regions detected: {len(st.session_state.bounding_boxes)} (numbered left to right)")
-    
-    if st.session_state.segmented_image is not None and len(st.session_state.bounding_boxes) > 0:
-        # Step 3: OCR
-        st.subheader("Step 3: OCR Recognition")
-        
-        if st.button("Run EasyOCR", width='content'):
-            with st.spinner("Running OCR..."):
-                ocr_results = run_custom_model(
-                    st.session_state.processed_image,
-                    st.session_state.bounding_boxes
-                )
-                st.session_state.ocr_results = ocr_results
-                st.success("OCR complete")
-                st.rerun()
-        
-        # Display OCR results
-        if st.session_state.ocr_results:
-            st.write("**OCR Results:**")
-            
-            ocr_df_data = []
-            for i, result in enumerate(st.session_state.ocr_results):
-                ocr_df_data.append({
-                    "Region": i + 1,
-                    "Text": result['text'],
-                    "Confidence": f"{result['confidence']:.2%}"
-                })
-            
-            st.dataframe(ocr_df_data, width='content')
-            
-            # Extracted text
-            extracted_text = " ".join([r['text'] for r in st.session_state.ocr_results])
-            st.text_area("Extracted Text", extracted_text, height=100)
-            
-            # Step 4: Gemini Reconstruction
-            st.subheader("Step 4: AI Reconstruction")
-            
-            if not gemini_api_key:
-                st.warning("Please add GEMINI_API_KEY to your .env file or enter it in the sidebar")
-            else:
-                if st.button("Reconstruct Sentence", width='content'):
-                    with st.spinner("Reconstructing text with LLM..."):
-                        reconstructed = reconstruct_with_gemini(
-                            extracted_text,
-                            gemini_api_key
-                        )
-                        st.session_state.reconstructed_text = reconstructed
-                        st.success("Reconstruction complete")
-                        st.rerun()
-            
-            # Display reconstructed text
-            if st.session_state.reconstructed_text:
-                st.write("**Reconstructed Text:**")
-                st.markdown(st.session_state.reconstructed_text)
-                
-                # Download options
-                st.divider()
-                st.subheader("Download Results")
-                
-                col2a, col2b = st.columns(2)
-                
-                with col2a:
-                    # Download OCR results
-                    ocr_text = "\n".join([
-                        f"{r['text']} (conf: {r['confidence']:.2%})"
-                        for r in st.session_state.ocr_results
-                    ])
-                    st.download_button(
-                        "Download OCR Results",
-                        ocr_text,
-                        file_name="ocr_results.txt",
-                        width='content'
-                    )
-                
-                with col2b:
-                    # Download reconstructed text
-                    st.download_button(
-                        "Download Reconstruction",
-                        st.session_state.reconstructed_text,
-                        file_name="reconstructed_text.txt",
-                        width='content'
-                    )
     else:
-        st.info("Please complete the preprocessing and segmentation steps first")
+        # Cache the preprocessing result to avoid recomputation
+        cache_key = f"{hash(original_image_cv.tobytes())}_{apply_clahe}_{clahe_clip}_{clahe_grid}_{invert_grayscale}_{denoise_method}_{blur_ksize}_{nl_h}_{nl_template}_{nl_search}_{adaptive_method_option}_{adaptive_block}_{adaptive_c}_{opening_iter}_{erosion_iter}_{dilation_iter}_{apply_dot_removal}_{dot_min_size}_{dot_max_aspect_ratio}_{dot_circularity_threshold}"
+        
+        if 'preprocess_cache' not in st.session_state:
+            st.session_state.preprocess_cache = {}
+        
+        if cache_key in st.session_state.preprocess_cache:
+            disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = st.session_state.preprocess_cache[cache_key]
+        else:
+            disp_gray, disp_clahe, denoised, binarized, post_morph, final_output = preprocess_image_v8(
+                original_image_cv, apply_clahe, clahe_clip, clahe_grid,
+                invert_grayscale, denoise_method, blur_ksize,
+                nl_h, nl_template, nl_search,
+                adaptive_method_option, adaptive_block, adaptive_c,
+                opening_iter, erosion_iter, dilation_iter,
+                apply_dot_removal, dot_min_size, dot_max_aspect_ratio,
+                dot_circularity_threshold
+            )
+            st.session_state.preprocess_cache[cache_key] = (disp_gray, disp_clahe, denoised, binarized, post_morph, final_output)
+    
+    st.session_state.processed_image = final_output
+    
+    # 1. Collect all active stages into a list
+    stages = []
+    stages.append((original_image_cv, "Original"))
+    stages.append((disp_gray, "Grayscale"))
 
-# Footer
+    if apply_clahe and disp_clahe is not None:
+        stages.append((disp_clahe, "CLAHE"))
+
+    stages.append((denoised, "Denoised"))
+    stages.append((binarized, "Binarized"))
+    stages.append((post_morph, "Morphology"))
+    stages.append((final_output, "Final (Dots Removed)"))
+
+    # 2. Display in a grid (2 images per row for larger size)
+    cols_per_row = 2
+    
+    # Loop through the list in chunks of 2
+    for i in range(0, len(stages), cols_per_row):
+        row_stages = stages[i : i + cols_per_row]
+        cols = st.columns(cols_per_row)
+        
+        for j, (img, label) in enumerate(row_stages):
+            # Calculate the step number automatically (1, 2, 3...)
+            step_number = i + j + 1
+            # Use a fixed width so images don't become too large on wide screens
+            cols[j].image(img, caption=f"{step_number}. {label}", width=300)
+    
+    # Step 2: Real-time Segmentation
+    st.subheader("Step 2: Character Segmentation (Real-time)")
+    
+    with st.spinner("Segmenting characters..."):
+        bounding_boxes = segment_characters(
+            st.session_state.processed_image,
+            min_area=min_area,
+            padding=seg_padding,
+            max_area_ratio=max_area_ratio
+        )
+        
+        st.session_state.bounding_boxes = bounding_boxes
+        
+        if len(bounding_boxes) == 0:
+            st.warning("No character regions found. Adjust segmentation parameters in the sidebar.")
+            st.session_state.segmented_image = None
+        else:
+            # Draw bounding boxes with left-to-right numbering
+            st.session_state.segmented_image = draw_bounding_boxes(
+                st.session_state.processed_image,
+                bounding_boxes
+            )
+            st.success(f"Found {len(bounding_boxes)} character regions")
+    
+    # Display segmented image (fixed width so it fits on screen)
+    if st.session_state.segmented_image is not None:
+        st.image(
+            st.session_state.segmented_image,
+            caption=f"Character Segmentation Results: {len(st.session_state.bounding_boxes)} regions detected",
+            width=400        )
+
+# ===========================
+# SECTION 2: OCR & RECONSTRUCTION (Below preprocessing)
+# ===========================
 st.divider()
-st.markdown("""
-### Instructions:
-1. **Upload** an image of the ancient Kannada inscription
-2. **Adjust preprocessing parameters** in the sidebar (updates in real-time)
-3. **Segment** characters to identify individual regions
-4. **Run OCR** to extract text (placeholder for your fine-tuned model)
-5. **Reconstruct** the text using Gemini API for better accuracy
-6. **Download** results for further analysis
-""")
+st.header("OCR & Reconstruction")
+
+if st.session_state.processed_image is not None and len(st.session_state.bounding_boxes) > 0:
+    st.info(f"Image processed successfully. {len(st.session_state.bounding_boxes)} regions detected.")
+    
+    # Step 3: OCR
+    st.subheader("Step 3: OCR Recognition")
+    
+    if st.button("Run OCR", type="primary", width="stretch"):
+        with st.spinner("Running OCR..."):
+            ocr_results = run_custom_model(
+                st.session_state.processed_image,
+                st.session_state.bounding_boxes
+            )
+            st.session_state.ocr_results = ocr_results
+            st.success("OCR complete")
+            st.rerun()
+    
+    # Display OCR results
+    if st.session_state.ocr_results:
+        st.write("**OCR Results:**")
+        
+        ocr_df_data = []
+        for i, result in enumerate(st.session_state.ocr_results):
+            ocr_df_data.append({
+                "Region": i + 1,
+                "Text": result['text'],
+                "Confidence": f"{result['confidence']:.2%}"
+            })
+        
+        st.dataframe(ocr_df_data, width="stretch")
+        
+        # Extracted text
+        extracted_text = " ".join([r['text'] for r in st.session_state.ocr_results])
+        st.text_area("Extracted Text", extracted_text, height=100)
+        
+        # Step 4: Gemini Reconstruction
+        st.subheader("Step 4: AI Reconstruction")
+        
+        if not gemini_api_key:
+            st.warning("Please configure Gemini API key in the sidebar or .env file.")
+        else:
+            if st.button("Reconstruct Sentence", type="primary", width="stretch"):
+                with st.spinner("Reconstructing text with LLM..."):
+                    reconstructed = reconstruct_with_gemini(
+                        extracted_text,
+                        gemini_api_key
+                    )
+                    st.session_state.reconstructed_text = reconstructed
+                    st.success("Reconstruction complete")
+                    st.rerun()
+        
+        # Display reconstructed text
+        if st.session_state.reconstructed_text:
+            st.write("**Reconstructed Text:**")
+            st.markdown(st.session_state.reconstructed_text)
+            
+            # Download options
+            st.divider()
+            st.subheader("Download Results")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Download OCR results
+                ocr_text = "\n".join([
+                    f"{r['text']} (conf: {r['confidence']:.2%})"
+                    for r in st.session_state.ocr_results
+                ])
+                st.download_button(
+                    "Download OCR Results",
+                    ocr_text,
+                    file_name="ocr_results.txt",
+                    width="stretch"
+                )
+            
+            with col2:
+                # Download reconstructed text
+                st.download_button(
+                    "Download Reconstruction",
+                    st.session_state.reconstructed_text,
+                    file_name="reconstructed_text.txt",
+                    width="stretch"
+                )
+else:
+    st.info("Please upload an image and complete the preprocessing and segmentation steps first.")
+
