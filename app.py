@@ -1,3 +1,4 @@
+
 import streamlit as st
 import cv2
 import numpy as np
@@ -7,12 +8,15 @@ import os
 from dotenv import load_dotenv
 from preprocess import preprocess_image_v8
 from segment import segment_characters, draw_bounding_boxes
+from gemini_reconstruct import reconstruct_with_gemini, reconstruct_with_context, batch_reconstruct
 from ocr_model import run_custom_model
-from gemini_reconstruct import reconstruct_with_gemini
+from groq_reconstruct import reconstruct_with_groq
+
 
 # Load environment variables
 load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 
 # Page config
 st.set_page_config(
@@ -269,7 +273,7 @@ if uploaded_file is not None:
     stages.append((post_morph, "Morphology"))
     stages.append((final_output, "Final (Dots Removed)"))
 
-    # 2. Display in a grid (2 images per row for larger size)
+    # 2. Display in a grid (2 images per row)
     cols_per_row = 2
     
     # Loop through the list in chunks of 2
@@ -280,8 +284,8 @@ if uploaded_file is not None:
         for j, (img, label) in enumerate(row_stages):
             # Calculate the step number automatically (1, 2, 3...)
             step_number = i + j + 1
-            # Use a fixed width so images don't become too large on wide screens
-            cols[j].image(img, caption=f"{step_number}. {label}", width=300)
+            # Use a smaller fixed width so previews stay compact
+            cols[j].image(img, caption=f"{step_number}. {label}", width=240)
     
     # Step 2: Real-time Segmentation
     st.subheader("Step 2: Character Segmentation (Real-time)")
@@ -307,12 +311,13 @@ if uploaded_file is not None:
             )
             st.success(f"Found {len(bounding_boxes)} character regions")
     
-    # Display segmented image (fixed width so it fits on screen)
+    # Display segmented image (smaller width to save space)
     if st.session_state.segmented_image is not None:
         st.image(
             st.session_state.segmented_image,
             caption=f"Character Segmentation Results: {len(st.session_state.bounding_boxes)} regions detected",
-            width=400        )
+            width=320
+        )
 
 # ===========================
 # SECTION 2: OCR & RECONSTRUCTION (Below preprocessing)
@@ -357,14 +362,14 @@ if st.session_state.processed_image is not None and len(st.session_state.boundin
         # Step 4: Gemini Reconstruction
         st.subheader("Step 4: AI Reconstruction")
         
-        if not gemini_api_key:
+        if not GROQ_API_KEY:
             st.warning("Please configure Gemini API key in the sidebar or .env file.")
         else:
             if st.button("Reconstruct Sentence", type="primary", width="stretch"):
                 with st.spinner("Reconstructing text with LLM..."):
-                    reconstructed = reconstruct_with_gemini(
+                    reconstructed = reconstruct_with_groq(
                         extracted_text,
-                        gemini_api_key
+                        GROQ_API_KEY
                     )
                     st.session_state.reconstructed_text = reconstructed
                     st.success("Reconstruction complete")
